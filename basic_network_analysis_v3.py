@@ -66,6 +66,17 @@ def create_network_graph(df):
     user_companies = df.groupby('username')['company'].first().to_dict()
     user_names = df.groupby('username')['name'].first().to_dict()
 
+    # NEW: map username -> NPI (fallback to 0 if missing). Coerce to numeric first.
+    user_npi = {}
+    if 'NPI' in df.columns:
+        npi_series = (
+            df.assign(_NPI_num=pd.to_numeric(df['NPI'], errors='coerce'))
+              .groupby('username')['_NPI_num']
+              .first()
+              .fillna(0)
+        )
+        user_npi = npi_series.astype(int).to_dict()
+
     all_usernames = set(df['username'].dropna().unique())
 
     # Counters
@@ -89,7 +100,9 @@ def create_network_graph(df):
                 user_type=user_types.get(author_username, 'Unknown'),
                 engagement=user_engagement.get(author_username, 0),
                 company=user_companies.get(author_username, 'not mentioned'),
-                is_in_dataset=True
+                is_in_dataset=True,
+                # NEW: store NPI
+                npi=int(user_npi.get(author_username, 0))
             )
 
         # Mentions
@@ -110,7 +123,9 @@ def create_network_graph(df):
                             user_type='Unknown',
                             engagement=0,
                             company='not mentioned',
-                            is_in_dataset=is_in_dataset
+                            is_in_dataset=is_in_dataset,
+                            # NEW: store NPI (0 if we don't have it)
+                            npi=int(user_npi.get(mentioned_user, 0))
                         )
 
                     if G.has_edge(author_username, mentioned_user):
@@ -152,7 +167,9 @@ def create_network_graph(df):
                             user_type=user_types.get(target_user, 'Unknown'),
                             engagement=user_engagement.get(target_user, 0),
                             company=user_companies.get(target_user, 'not mentioned'),
-                            is_in_dataset=is_in_dataset
+                            is_in_dataset=is_in_dataset,
+                            # NEW: store NPI
+                            npi=int(user_npi.get(target_user, 0))
                         )
 
                     if G.has_edge(author_username, target_user):
@@ -256,6 +273,9 @@ def plot_network_graph(G, layout='spring', max_nodes=None):
             engagement = G.nodes[node].get('engagement', 0)
             company = G.nodes[node].get('company', 'not mentioned')
             is_in_dataset = G.nodes[node].get('is_in_dataset', False)
+            # NEW: NPI value for hover (— if 0 or missing)
+            npi_val = G.nodes[node].get('npi', 0)
+            npi_text = str(int(npi_val)) if pd.notna(npi_val) and int(npi_val) != 0 else '—'
 
             node_text.append(
                 f"Username: @{node}<br>"
@@ -264,6 +284,7 @@ def plot_network_graph(G, layout='spring', max_nodes=None):
                 f"Followers: {followers:,}<br>"
                 f"Total Engagement: {engagement:,}<br>"
                 f"Company: {company}<br>"
+                f"NPI: {npi_text}<br>"
                 f"In Dataset: {'Yes' if is_in_dataset else 'No'}"
             )
             size_val = max(15, min(60, np.log(followers + 1) * 6))
@@ -554,7 +575,9 @@ def main():
                             'Total Engagement': G.nodes[node].get('engagement', 0),
                             'Company': G.nodes[node].get('company', 'not mentioned'),
                             'In Dataset': G.nodes[node].get('is_in_dataset', False),
-                            'Degree': G.degree(node)
+                            'Degree': G.degree(node),
+                            # NEW: include NPI in table
+                            'NPI': G.nodes[node].get('npi', 0)
                         })
                     nodes_df = pd.DataFrame(nodes_data)
                     st.dataframe(
