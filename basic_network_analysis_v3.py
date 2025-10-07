@@ -8,6 +8,7 @@ import json
 import numpy as np
 import os
 import ast
+import pathlib  # <-- added
 
 def safe_eval(data):
     """Safely evaluate string data that might be a list"""
@@ -125,7 +126,7 @@ def create_network_graph(df):
                                  mentions=1, replies=0, retweets=0, quotes=0, total_interactions=1)
                     
                     interaction_counts['mentions'] += 1
-        except Exception as e:
+        except Exception:
             continue
         
         # Process referenced tweets (replies, retweets, quotes) - CORRECTED LOGIC
@@ -207,7 +208,7 @@ def create_network_graph(df):
                     if idx < 10:  # Only show first few for debugging
                         st.sidebar.warning(f"Parent tweet {cleaned_parent_id} not found in dataset")
                         
-        except Exception as e:
+        except Exception:
             # Skip referenced tweets errors and continue
             continue
     
@@ -322,7 +323,7 @@ def plot_network_graph(G, layout='spring', max_nodes=None):
                 node_color.append('#7f7f7f')  # Gray for users not in dataset
             
             node_names.append(node)
-        except Exception as e:
+        except Exception:
             continue
     
     # Create edges
@@ -376,7 +377,7 @@ def plot_network_graph(G, layout='spring', max_nodes=None):
             else:
                 edge_colors.append('#888888')  # Gray for mentions
             
-        except Exception as e:
+        except Exception:
             continue
     
     # Create Plotly figure
@@ -436,225 +437,253 @@ def main():
     st.set_page_config(page_title="Twitter Network Analysis", layout="wide")
     st.title("📊 Twitter User Interaction Network")
     
-    # Define the file path
-    #file_path = r"C:\Users\rajas\OneDrive\Desktop\GRE\Documents\ASU\Semester_4\CPT_Summer\HCP_Analysis\eha_Twitter_tagged_Final.xlsx"
-    file_path = pathlib.Path(__file__).parent / "eha_Twitter_tagged_Final.xlsx"
+    # ---------- Robust file discovery & loading ----------
+    file_basename = "eha_Twitter_tagged_Final.xlsx"
+    app_dir = pathlib.Path(__file__).parent
 
-    
-    # Check if file exists
-    if os.path.exists(file_path):
+    # Candidate locations to try first
+    candidates = [
+        app_dir / file_basename,              # same folder as .py
+        app_dir / "data" / file_basename,     # data subfolder (common pattern)
+        app_dir.parent / file_basename,       # one level up (some deploy layouts)
+    ]
+
+    file_path = None
+    for cand in candidates:
+        if cand.exists():
+            file_path = cand
+            break
+
+    # If still not found, search entire repo tree for the filename
+    if file_path is None:
         try:
-            # Read the Excel file
-            st.info("Loading Excel file...")
-            df = pd.read_excel(file_path)
-            st.success(f"Dataset loaded successfully! Shape: {df.shape}")
-            
-            # Display column information for debugging
-            with st.expander("Dataset Info (Click to expand)"):
-                st.write("**Columns in dataset:**", list(df.columns))
-                st.write("**First few rows of referenced_tweets:**")
-                st.write(df['referenced_tweets'].head(10))
-                st.write("**First few rows of tweet_id:**")
-                st.write(df['tweet_id'].head(10))
-            
-            # Show basic stats
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                st.metric("Total Users", df['username'].nunique())
-            with col2:
-                st.metric("Total Tweets", len(df))
-            with col3:
-                st.metric("User Types", df['user_type'].nunique())
-            with col4:
-                st.metric("Max Followers", f"{df['followers_count'].max():,}")
-            
-            # Sidebar controls
-            st.sidebar.header("Network Settings")
-            
-            # User Type Filter
-            user_types = ['All'] + sorted(df['user_type'].dropna().unique().tolist())
-            selected_user_types = st.sidebar.multiselect(
-                "Filter by User Type",
-                options=user_types,
-                default=['All'],
-                help="Select user types to include in the network"
-            )
-            
-            # Company Filter
-            companies = ['All'] + sorted(df['company'].dropna().unique().tolist())
-            selected_companies = st.sidebar.multiselect(
-                "Filter by Company",
-                options=companies,
-                default=['All'],
-                help="Select companies to include in the network"
-            )
-            
-            # Number of nodes filter
-            max_nodes = st.sidebar.slider(
-                "Maximum Number of Nodes to Display",
-                min_value=10,
-                max_value=500,
-                value=100,
-                help="Limit the number of nodes for better visualization"
-            )
-            
-            layout_option = st.sidebar.selectbox(
-                "Layout Algorithm",
-                ['spring', 'circular', 'kamada_kawai'],
-                help="Choose how to arrange the nodes in the network"
-            )
-            
-            min_followers = st.sidebar.slider(
-                "Minimum Followers Filter",
-                min_value=0,
-                max_value=int(df['followers_count'].max()),
-                value=0,
-                help="Only show users with at least this many followers"
-            )
-            
-            # Apply filters
-            filtered_df = df.copy()
-            
-            # Apply user type filter
-            if 'All' not in selected_user_types:
-                filtered_df = filtered_df[filtered_df['user_type'].isin(selected_user_types)]
-            
-            # Apply company filter
-            if 'All' not in selected_companies:
-                filtered_df = filtered_df[filtered_df['company'].isin(selected_companies)]
-            
-            # Apply followers filter
-            user_followers = filtered_df.groupby('username')['followers_count'].max()
-            users_to_include = user_followers[user_followers >= min_followers].index
-            filtered_df = filtered_df[filtered_df['username'].isin(users_to_include)]
-            
-            st.sidebar.info(f"Showing {len(users_to_include)} users after filtering")
-            
-            # Display filter summary
-            st.subheader("Filter Summary")
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                st.write(f"**Selected User Types:** {', '.join(selected_user_types) if 'All' in selected_user_types else ', '.join(selected_user_types)}")
-            with col2:
-                st.write(f"**Selected Companies:** {', '.join(selected_companies) if 'All' in selected_companies else ', '.join(selected_companies)}")
-            with col3:
-                st.write(f"**Min Followers:** {min_followers:,}")
-            with col4:
-                st.write(f"**Max Nodes:** {max_nodes}")
-            
-            # Create network graph
-            if len(filtered_df) > 0:
-                with st.spinner("Building network graph..."):
-                    try:
-                        G = create_network_graph(filtered_df)
-                        
-                        if len(G.nodes) > 0:
-                            # Display network statistics
-                            st.subheader("Network Statistics")
-                            col1, col2, col3, col4 = st.columns(4)
-                            
-                            with col1:
-                                st.metric("Nodes", len(G.nodes()))
-                            with col2:
-                                st.metric("Edges", len(G.edges()))
-                            with col3:
-                                try:
-                                    density = nx.density(G)
-                                    st.metric("Density", f"{density:.4f}")
-                                except:
-                                    st.metric("Density", "N/A")
-                            with col4:
-                                try:
-                                    avg_degree = sum(dict(G.degree()).values()) / len(G.nodes())
-                                    st.metric("Avg Degree", f"{avg_degree:.2f}")
-                                except:
-                                    st.metric("Avg Degree", "N/A")
-                            
-                            # Plot the graph
-                            st.subheader("Interactive Network Graph")
-                            fig = plot_network_graph(G, layout=layout_option, max_nodes=max_nodes)
-                            if fig:
-                                st.plotly_chart(fig, use_container_width=True)
-                                
-                                # Add legend
-                                st.markdown("""
-                                **Legend:**
-                                - **Node Colors:** Blue=HCP, Orange=Analyst, Green=Blogger, Purple=Medical Community, Red=Other, Gray=Not in dataset
-                                - **Edge Colors:** Red=Replies, Green=Retweets, Blue=Quotes, Gray=Mentions
-                                - **Node Size:** Based on followers count
-                                - **Edge Width:** Based on interaction frequency
-                                """)
-                            else:
-                                st.error("Could not generate the network graph")
-                            
-                            # Show node details
-                            st.subheader("Node Details")
-                            nodes_data = []
-                            for node in G.nodes():
-                                node_data = {
-                                    'Username': node,
-                                    'Name': G.nodes[node].get('name', 'N/A'),
-                                    'Followers': G.nodes[node].get('followers_count', 0),
-                                    'User Type': G.nodes[node].get('user_type', 'Unknown'),
-                                    'Total Engagement': G.nodes[node].get('engagement', 0),
-                                    'Company': G.nodes[node].get('company', 'not mentioned'),
-                                    'In Dataset': G.nodes[node].get('is_in_dataset', False),
-                                    'Degree': G.degree(node)
-                                }
-                                nodes_data.append(node_data)
-                            
-                            nodes_df = pd.DataFrame(nodes_data)
-                            st.dataframe(
-                                nodes_df.sort_values('Followers', ascending=False), 
-                                use_container_width=True,
-                                height=400
-                            )
-                            
-                            # Show edge details (interactions)
-                            st.subheader("Interaction Details")
-                            edges_data = []
-                            for edge in G.edges():
-                                source, target = edge
-                                edge_data = G[source][target]
-                                total_interactions = edge_data.get('total_interactions', 0)
-                                
-                                if total_interactions > 0:
-                                    edges_data.append({
-                                        'Source': source,
-                                        'Target': target,
-                                        'Mentions': edge_data.get('mentions', 0),
-                                        'Replies': edge_data.get('replies', 0),
-                                        'Retweets': edge_data.get('retweets', 0),
-                                        'Quotes': edge_data.get('quotes', 0),
-                                        'Total Interactions': total_interactions
-                                    })
-                            
-                            if edges_data:
-                                edges_df = pd.DataFrame(edges_data)
-                                st.dataframe(
-                                    edges_df.sort_values('Total Interactions', ascending=False), 
-                                    use_container_width=True,
-                                    height=400
-                                )
-                            else:
-                                st.info("No interactions found in the filtered data.")
-                            
-                        else:
-                            st.warning("No nodes found in the network graph. Please check your data or adjust filters.")
-                            
-                    except Exception as e:
-                        st.error(f"Error creating network graph: {str(e)}")
-                        st.info("This might be due to issues with the data format. Check the dataset info above.")
-            else:
-                st.warning("No data matches the current filters. Please adjust your filter settings.")
-                    
-        except Exception as e:
-            st.error(f"Error processing the file: {str(e)}")
-            st.info("Please make sure the file path is correct and the Excel file is not corrupted.")
+            matches = list(pathlib.Path.cwd().rglob(file_basename))
+            if matches:
+                file_path = matches[0]
+        except Exception:
+            pass
+
+    # If still not found, show diagnostics and allow upload
+    if file_path is None:
+        st.error(f"❌ Could not find `{file_basename}` in the repository.")
+        with st.expander("Debug info"):
+            st.write("CWD:", pathlib.Path.cwd())
+            try:
+                st.write("Files in script dir:", [p.name for p in app_dir.iterdir()])
+            except Exception as e:
+                st.write("Could not list script dir:", e)
+
+        uploaded = st.file_uploader("Upload Excel file", type=["xlsx"])
+        if not uploaded:
+            st.stop()
+        df = pd.read_excel(uploaded)
+        st.success(f"✅ Loaded uploaded file. Shape: {df.shape}")
     else:
-        st.error(f"File not found at: {file_path}")
-        st.info("Please check if the file exists at the specified location.")
+        st.info(f"Loading Excel file from: `{file_path}`")
+        df = pd.read_excel(file_path)
+        st.success(f"✅ Dataset loaded successfully! Shape: {df.shape}")
+    # ---------- /file loading ----------
+
+    # Display column information for debugging
+    with st.expander("Dataset Info (Click to expand)"):
+        st.write("**Columns in dataset:**", list(df.columns))
+        if 'referenced_tweets' in df.columns:
+            st.write("**First few rows of referenced_tweets:**")
+            st.write(df['referenced_tweets'].head(10))
+        if 'tweet_id' in df.columns:
+            st.write("**First few rows of tweet_id:**")
+            st.write(df['tweet_id'].head(10))
+    
+    # Show basic stats
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Total Users", df['username'].nunique())
+    with col2:
+        st.metric("Total Tweets", len(df))
+    with col3:
+        st.metric("User Types", df['user_type'].nunique())
+    with col4:
+        st.metric("Max Followers", f"{df['followers_count'].max():,}")
+    
+    # Sidebar controls
+    st.sidebar.header("Network Settings")
+    
+    # User Type Filter
+    user_types = ['All'] + sorted(df['user_type'].dropna().unique().tolist())
+    selected_user_types = st.sidebar.multiselect(
+        "Filter by User Type",
+        options=user_types,
+        default=['All'],
+        help="Select user types to include in the network"
+    )
+    
+    # Company Filter
+    companies = ['All'] + sorted(df['company'].dropna().unique().tolist())
+    selected_companies = st.sidebar.multiselect(
+        "Filter by Company",
+        options=companies,
+        default=['All'],
+        help="Select companies to include in the network"
+    )
+    
+    # Number of nodes filter
+    max_nodes = st.sidebar.slider(
+        "Maximum Number of Nodes to Display",
+        min_value=10,
+        max_value=500,
+        value=100,
+        help="Limit the number of nodes for better visualization"
+    )
+    
+    layout_option = st.sidebar.selectbox(
+        "Layout Algorithm",
+        ['spring', 'circular', 'kamada_kawai'],
+        help="Choose how to arrange the nodes in the network"
+    )
+    
+    min_followers = st.sidebar.slider(
+        "Minimum Followers Filter",
+        min_value=0,
+        max_value=int(df['followers_count'].max()),
+        value=0,
+        help="Only show users with at least this many followers"
+    )
+    
+    # Apply filters
+    filtered_df = df.copy()
+    
+    # Apply user type filter
+    if 'All' not in selected_user_types:
+        filtered_df = filtered_df[filtered_df['user_type'].isin(selected_user_types)]
+    
+    # Apply company filter
+    if 'All' not in selected_companies:
+        filtered_df = filtered_df[filtered_df['company'].isin(selected_companies)]
+    
+    # Apply followers filter
+    user_followers = filtered_df.groupby('username')['followers_count'].max()
+    users_to_include = user_followers[user_followers >= min_followers].index
+    filtered_df = filtered_df[filtered_df['username'].isin(users_to_include)]
+    
+    st.sidebar.info(f"Showing {len(users_to_include)} users after filtering")
+    
+    # Display filter summary
+    st.subheader("Filter Summary")
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.write(f"**Selected User Types:** {', '.join(selected_user_types) if 'All' in selected_user_types else ', '.join(selected_user_types)}")
+    with col2:
+        st.write(f"**Selected Companies:** {', '.join(selected_companies) if 'All' in selected_companies else ', '.join(selected_companies)}")
+    with col3:
+        st.write(f"**Min Followers:** {min_followers:,}")
+    with col4:
+        st.write(f"**Max Nodes:** {max_nodes}")
+    
+    # Create network graph
+    if len(filtered_df) > 0:
+        with st.spinner("Building network graph..."):
+            try:
+                G = create_network_graph(filtered_df)
+                
+                if len(G.nodes) > 0:
+                    # Display network statistics
+                    st.subheader("Network Statistics")
+                    col1, col2, col3, col4 = st.columns(4)
+                    
+                    with col1:
+                        st.metric("Nodes", len(G.nodes()))
+                    with col2:
+                        st.metric("Edges", len(G.edges()))
+                    with col3:
+                        try:
+                            density = nx.density(G)
+                            st.metric("Density", f"{density:.4f}")
+                        except Exception:
+                            st.metric("Density", "N/A")
+                    with col4:
+                        try:
+                            avg_degree = sum(dict(G.degree()).values()) / len(G.nodes())
+                            st.metric("Avg Degree", f"{avg_degree:.2f}")
+                        except Exception:
+                            st.metric("Avg Degree", "N/A")
+                    
+                    # Plot the graph
+                    st.subheader("Interactive Network Graph")
+                    fig = plot_network_graph(G, layout=layout_option, max_nodes=max_nodes)
+                    if fig:
+                        st.plotly_chart(fig, use_container_width=True)
+                        
+                        # Add legend
+                        st.markdown("""
+                        **Legend:**
+                        - **Node Colors:** Blue=HCP, Orange=Analyst, Green=Blogger, Purple=Medical Community, Red=Other, Gray=Not in dataset
+                        - **Edge Colors:** Red=Replies, Green=Retweets, Blue=Quotes, Gray=Mentions
+                        - **Node Size:** Based on followers count
+                        - **Edge Width:** Based on interaction frequency
+                        """)
+                    else:
+                        st.error("Could not generate the network graph")
+                    
+                    # Show node details
+                    st.subheader("Node Details")
+                    nodes_data = []
+                    for node in G.nodes():
+                        node_data = {
+                            'Username': node,
+                            'Name': G.nodes[node].get('name', 'N/A'),
+                            'Followers': G.nodes[node].get('followers_count', 0),
+                            'User Type': G.nodes[node].get('user_type', 'Unknown'),
+                            'Total Engagement': G.nodes[node].get('engagement', 0),
+                            'Company': G.nodes[node].get('company', 'not mentioned'),
+                            'In Dataset': G.nodes[node].get('is_in_dataset', False),
+                            'Degree': G.degree(node)
+                        }
+                        nodes_data.append(node_data)
+                    
+                    nodes_df = pd.DataFrame(nodes_data)
+                    st.dataframe(
+                        nodes_df.sort_values('Followers', ascending=False), 
+                        use_container_width=True,
+                        height=400
+                    )
+                    
+                    # Show edge details (interactions)
+                    st.subheader("Interaction Details")
+                    edges_data = []
+                    for edge in G.edges():
+                        source, target = edge
+                        edge_data = G[source][target]
+                        total_interactions = edge_data.get('total_interactions', 0)
+                        
+                        if total_interactions > 0:
+                            edges_data.append({
+                                'Source': source,
+                                'Target': target,
+                                'Mentions': edge_data.get('mentions', 0),
+                                'Replies': edge_data.get('replies', 0),
+                                'Retweets': edge_data.get('retweets', 0),
+                                'Quotes': edge_data.get('quotes', 0),
+                                'Total Interactions': total_interactions
+                            })
+                    
+                    if edges_data:
+                        edges_df = pd.DataFrame(edges_data)
+                        st.dataframe(
+                            edges_df.sort_values('Total Interactions', ascending=False), 
+                            use_container_width=True,
+                            height=400
+                        )
+                    else:
+                        st.info("No interactions found in the filtered data.")
+                    
+                else:
+                    st.warning("No nodes found in the network graph. Please check your data or adjust filters.")
+                    
+            except Exception as e:
+                st.error(f"Error creating network graph: {str(e)}")
+                st.info("This might be due to issues with the data format. Check the dataset info above.")
+    else:
+        st.warning("No data matches the current filters. Please adjust your filter settings.")
 
 if __name__ == "__main__":
-
     main()
