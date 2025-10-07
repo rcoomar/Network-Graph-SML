@@ -438,7 +438,7 @@ def main():
     
     # Define the file path
     #file_path = r"C:\Users\rajas\OneDrive\Desktop\GRE\Documents\ASU\Semester_4\CPT_Summer\HCP_Analysis\eha_Twitter_tagged_Final.xlsx"
-    file_path = pathlib.Path(__file__).parent / "data" / "eha_Twitter_tagged_Final.xlsx"
+    file_path = pathlib.Path(__file__).parent / "eha_Twitter_tagged_Final.xlsx"
 
     
     # Check if file exists
@@ -656,4 +656,5 @@ def main():
         st.info("Please check if the file exists at the specified location.")
 
 if __name__ == "__main__":
+
     main()
