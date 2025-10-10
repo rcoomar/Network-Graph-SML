@@ -41,6 +41,20 @@ def clean_tweet_id(tweet_id):
     return tweet_id_str
 
 
+def extract_individual_companies(company_series):
+    """Extract individual company names from company column that may contain multiple companies"""
+    all_companies = set()
+    
+    for company_str in company_series.dropna():
+        if isinstance(company_str, str):
+            # Split by common separators and clean up
+            companies = [comp.strip() for comp in company_str.replace(',', ';').split(';')]
+            # Filter out empty strings and add to set
+            all_companies.update([comp for comp in companies if comp])
+    
+    return sorted(list(all_companies))
+
+
 def create_network_graph(df):
     """
     Create a network graph from Twitter data with proper referenced tweet processing
@@ -469,6 +483,17 @@ def main():
 
     # Sidebar controls
     st.sidebar.header("Network Settings")
+    
+    # 1. Name filter
+    names = ['All'] + sorted(df['name'].dropna().unique().tolist())
+    selected_names = st.sidebar.multiselect(
+        "Filter by Name",
+        options=names,
+        default=['All'],
+        help="Select names to include in the network"
+    )
+    
+    # User type filter
     user_types = ['All'] + sorted(df['user_type'].dropna().unique().tolist())
     selected_user_types = st.sidebar.multiselect(
         "Filter by User Type",
@@ -476,13 +501,16 @@ def main():
         default=['All'],
         help="Select user types to include in the network"
     )
-    companies = ['All'] + sorted(df['company'].dropna().unique().tolist())
-    selected_companies = st.sidebar.multiselect(
+    
+    # 2. Company filter with individual company names
+    individual_companies = ['All'] + extract_individual_companies(df['company'])
+    selected_individual_companies = st.sidebar.multiselect(
         "Filter by Company",
-        options=companies,
+        options=individual_companies,
         default=['All'],
-        help="Select companies to include in the network"
+        help="Select individual companies to include in the network"
     )
+    
     max_nodes = st.sidebar.slider(
         "Maximum Number of Nodes to Display",
         min_value=10, max_value=500, value=100,
@@ -501,10 +529,35 @@ def main():
 
     # Apply filters
     filtered_df = df.copy()
+    
+    # Apply name filter
+    if 'All' not in selected_names:
+        filtered_df = filtered_df[filtered_df['name'].isin(selected_names)]
+    
+    # Apply user type filter
     if 'All' not in selected_user_types:
         filtered_df = filtered_df[filtered_df['user_type'].isin(selected_user_types)]
-    if 'All' not in selected_companies:
-        filtered_df = filtered_df[filtered_df['company'].isin(selected_companies)]
+    
+    # Apply company filter - NEW LOGIC
+    if 'All' not in selected_individual_companies:
+        # Create a function to check if any of the selected companies are in the company string
+        def has_selected_company(company_str, selected_companies):
+            if pd.isna(company_str):
+                return False
+            if not isinstance(company_str, str):
+                return False
+            # Split the company string by common separators
+            user_companies = [comp.strip() for comp in company_str.replace(',', ';').split(';')]
+            # Check if any of the user's companies match any selected company
+            return any(selected_comp in user_companies for selected_comp in selected_companies)
+        
+        # Apply the filter
+        mask = filtered_df['company'].apply(
+            lambda x: has_selected_company(x, selected_individual_companies)
+        )
+        filtered_df = filtered_df[mask]
+    
+    # Apply followers filter
     user_followers = filtered_df.groupby('username')['followers_count'].max()
     users_to_include = user_followers[user_followers >= min_followers].index
     filtered_df = filtered_df[filtered_df['username'].isin(users_to_include)]
@@ -515,13 +568,13 @@ def main():
     st.subheader("Filter Summary")
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.write(f"**Selected User Types:** {', '.join(selected_user_types)}")
+        st.write(f"**Selected Names:** {', '.join(selected_names)}")
     with col2:
-        st.write(f"**Selected Companies:** {', '.join(selected_companies)}")
+        st.write(f"**Selected User Types:** {', '.join(selected_user_types)}")
     with col3:
-        st.write(f"**Min Followers:** {min_followers:,}")
+        st.write(f"**Selected Companies:** {', '.join(selected_individual_companies)}")
     with col4:
-        st.write(f"**Max Nodes:** {max_nodes}")
+        st.write(f"**Min Followers:** {min_followers:,}")
 
     # Build & plot network
     if len(filtered_df) > 0:
